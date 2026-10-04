@@ -1,0 +1,489 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Архитектура мессенджера</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: vertical deck, one 16:9-ish frame per screen, scroll-snap, arrow-key navigation */
+:root{
+  --bg:#f4f6f7; --paper:#ffffff; --fg:#15202b; --muted:#5b6b78; --line:#d6dde2;
+  --accent:#1f6f8b; --accent-soft:#e3eff4; --warn:#9a5b16; --warn-soft:#f6ead8;
+  --font-display:"Sora","IBM Plex Sans",system-ui,sans-serif;
+  --font-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0e1518; --paper:#15202a; --fg:#e6ecef; --muted:#9fb0bb; --line:#2b3942;
+  --accent:#6cbddb; --accent-soft:#193441; --warn:#e2b06a; --warn-soft:#3a2d1a; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0e1518; --paper:#15202a; --fg:#e6ecef; --muted:#9fb0bb; --line:#2b3942;
+  --accent:#6cbddb; --accent-soft:#193441; --warn:#e2b06a; --warn-soft:#3a2d1a; color-scheme:dark}
+
+html{scroll-snap-type:y proximity;scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:15px;line-height:1.45;margin:0;padding-inline:16px;padding-block:0}
+*{box-sizing:border-box}
+.slide{scroll-snap-align:start;min-height:100svh;display:grid;place-items:center;padding-block:32px}
+.frame{width:100%;max-width:1180px;background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:36px 44px 40px;display:flex;flex-direction:column;gap:18px;min-width:0;position:relative}
+.eyebrow{font-family:var(--font-mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);display:flex;justify-content:space-between;gap:12px}
+h1,h2{font-family:var(--font-display);text-wrap:balance;margin:0;line-height:1.15}
+h1{font-size:clamp(28px,4vw,46px);font-weight:700}
+h2{font-size:clamp(22px,2.6vw,32px);font-weight:600}
+h3{font-family:var(--font-display);font-size:15px;font-weight:600;margin:0 0 6px;color:var(--fg)}
+p{margin:0;max-width:72ch}
+.lead{font-size:17px;color:var(--muted);max-width:70ch}
+.cols{display:grid;gap:22px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));align-items:start}
+.cols>*{min-width:0}
+ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:5px}
+li{padding-left:2px}
+li::marker{color:var(--accent)}
+table{border-collapse:collapse;width:100%;font-size:13.5px;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-family:var(--font-mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500}
+td.num,th.num{text-align:right;font-family:var(--font-mono)}
+.tbl{overflow-x:auto;min-width:0}
+code{font-family:var(--font-mono);font-size:.92em;background:var(--accent-soft);padding:1px 5px;border-radius:3px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.kpi{border-top:2px solid var(--accent);padding-top:8px}
+.kpi b{display:block;font-family:var(--font-display);font-size:26px;font-weight:600;line-height:1.1}
+.kpi span{color:var(--muted);font-size:13px}
+.note{background:var(--accent-soft);border-left:3px solid var(--accent);padding:10px 14px;border-radius:0 4px 4px 0;font-size:14px}
+.note.warn{background:var(--warn-soft);border-left-color:var(--warn)}
+.diagram{overflow:auto;min-width:0;display:flex;justify-content:center;background:#fff;border:1px solid var(--line);border-radius:4px;padding:10px;max-height:62svh}
+.diagram img{max-width:100%;height:auto;max-height:60svh;object-fit:contain}
+.legend{font-size:13px;color:var(--muted);display:flex;flex-wrap:wrap;gap:6px 18px}
+.title .frame{min-height:70svh;justify-content:center;gap:26px}
+.title h1{font-size:clamp(34px,5vw,60px)}
+.title .meta{font-family:var(--font-mono);font-size:13px;color:var(--muted);display:flex;flex-wrap:wrap;gap:8px 24px}
+.nav{position:fixed;right:18px;bottom:calc(14px + env(safe-area-inset-bottom,0px));display:flex;gap:6px;align-items:center;font-family:var(--font-mono);font-size:12px;color:var(--muted);background:var(--paper);border:1px solid var(--line);border-radius:20px;padding:6px 10px;z-index:5}
+.nav button{all:unset;cursor:pointer;padding:2px 8px;border-radius:12px;color:var(--fg)}
+.nav button:hover,.nav button:focus-visible{background:var(--accent-soft);outline:2px solid var(--accent)}
+.foot{font-size:12px;color:var(--muted);margin-top:auto;padding-top:6px;border-top:1px dashed var(--line)}
+@media (max-width:640px){.frame{padding:22px 18px 26px}.slide{padding-block:18px}.nav{display:none}}
+</style>
+
+<!-- 1 -->
+<section class="slide title" id="s1"><div class="frame">
+  <div class="eyebrow"><span>ДЗ 6 · проектная работа · System Design</span></div>
+  <h1>Мессенджер с групповыми чатами</h1>
+  <p class="lead">Аналог Telegram: диалоги, группы до 200, супергруппы до 200 тыс., каналы без ограничения, облачная история без срока, медиа до 2 ГБ, боты, звонки 1:1, секретные чаты.</p>
+  <div class="meta"><span>50 млн DAU · 750 млн сообщений в сутки</span><span>один регион AWS + тёплый DR</span><span>полный документ: hw_06/solution/README.md</span></div>
+</div></section>
+
+<!-- 2 -->
+<section class="slide" id="s2"><div class="frame">
+  <div class="eyebrow"><span>1 · Требования</span><span>2 / 15</span></div>
+  <h2>Scope и масштаб</h2>
+  <div class="cols">
+    <div><h3>Что входит</h3><ul>
+      <li>Вход по телефону и коду: код в активную сессию, иначе СМС; облачный пароль</li>
+      <li>Диалоги и группы ≤ 200; супергруппы до 200 тыс. с ролями; каналы без лимита подписчиков</li>
+      <li>Мультиустройство: вся история на любом устройстве, согласованные непрочитанные</li>
+      <li>Медиа до 2 ГБ, хранение без срока, просмотр через CDN; серверный поиск</li>
+      <li>Bot API (webhook и long polling), звонки 1:1 через STUN / TURN, секретные чаты E2EE</li>
+      <li>Пуши APNs / FCM, антиспам с <code>FLOOD_WAIT</code></li>
+    </ul></div>
+    <div><h3>Backlog</h3><ul>
+      <li>Групповые звонки и трансляции (SFU)</li>
+      <li>Мультирегион active-active</li>
+      <li>Сторис, реакции, стикеры, папки</li>
+      <li>Платежи и подписки</li>
+      <li>ML-антиспам, E2EE в группах</li>
+    </ul></div>
+  </div>
+  <div class="kpis">
+    <div class="kpi"><b>200 / 50 млн</b><span>MAU / DAU, выбрано ориентировочно</span></div>
+    <div class="kpi"><b>750 млн</b><span>сообщений в сутки: 15 на DAU, 8.7 тыс./с</span></div>
+    <div class="kpi"><b>26 / 87 тыс./с</b><span>пик ×3 расчётный, ×10 событийный</span></div>
+    <div class="kpi"><b>5 / 8 млн</b><span>открытых соединений: среднее / пик</span></div>
+    <div class="kpi"><b>80 ТБ/сут</b><span>уникальных медиа: 10 % сообщений × 1.5 МБ, дедуп 30 %</span></div>
+  </div>
+  <p class="foot">Состав: диалоги 56 %, группы 36 %, супергруппы 7 % (3 000 участников), каналы 1 % (5 000 подписчиков). Получатель онлайн с вероятностью 15 %.</p>
+</div></section>
+
+<!-- 3 -->
+<section class="slide" id="s3"><div class="frame">
+  <div class="eyebrow"><span>1 · Требования</span><span>3 / 15</span></div>
+  <h2>Нефункциональные требования</h2>
+  <div class="tbl"><table>
+    <tr><th>#</th><th>Требование</th><th>Значение</th><th>Почему</th></tr>
+    <tr><td>N1</td><td>Доступность отправки и получения</td><td class="num">≥ 99.95 %, ≤ 22 мин/мес</td><td>Мессенджер заменяет телефон; простой виден 50 млн людей</td></tr>
+    <tr><td>N2</td><td>Медиа, звонки, боты, вход</td><td class="num">≥ 99.9 %</td><td>При отказе медиа текст работает</td></tr>
+    <tr><td>N3</td><td>Сквозная задержка онлайн → онлайн</td><td class="num">p95 ≤ 500 мс, p99 ≤ 1 с</td><td>Порог «живого» диалога</td></tr>
+    <tr><td>N4</td><td>Подтверждение отправки</td><td class="num">p95 ≤ 200 мс</td><td>Галочка до того, как пользователь усомнится</td></tr>
+    <tr><td>N5</td><td>Сохранность</td><td class="num">RPO 0</td><td>Подтверждённое сообщение не теряется</td></tr>
+    <tr><td>N6 / N7</td><td>Порядок и согласованность устройств</td><td class="num"><code>message_id</code>, <code>pts</code>; ≤ 1 с</td><td>Прочтение на одном устройстве снимает счётчик на остальных</td></tr>
+    <tr><td>N9</td><td>Размеры</td><td class="num">200 / 200 тыс. / 10 млн; файл 2 ГБ; текст 4 096</td><td>Границы, видимые пользователю</td></tr>
+    <tr><td>N10</td><td>Хранение</td><td class="num">история и медиа без срока; журнал 30 сут</td><td>Определяет расчёт хранилища</td></tr>
+    <tr><td>N12</td><td>Холодный вход</td><td class="num">список чатов ≤ 1 с</td><td>История без срока не означает минуту загрузки</td></tr>
+    <tr><td>N13</td><td>Потеря региона</td><td class="num">RTO 30 мин, RPO ≤ 30 с</td><td>Тёплый DR</td></tr>
+  </table></div>
+  <p class="foot">Внутренние бюджеты: <code>Chat.SendMessage</code> p99 ≤ 50 мс, ScyllaDB p99 ≤ 10 мс, поиск сессии в Presence p99 ≤ 5 мс.</p>
+</div></section>
+
+<!-- 4 -->
+<section class="slide" id="s4"><div class="frame">
+  <div class="eyebrow"><span>1 · Требования</span><span>4 / 15</span></div>
+  <h2>Риски и как они учтены</h2>
+  <div class="tbl"><table>
+    <tr><th>Риск</th><th>Почему это риск</th><th>Решение</th></tr>
+    <tr><td><b>Медиа без срока</b></td><td>80 ТБ/сут, 29 ПБ в год; хранение и раздача дают 74 % счёта</td><td>Ярусы по возрасту, дедупликация по хэшу, сжатие на клиенте</td></tr>
+    <tr><td><b>Горячие чаты</b></td><td>Пост на 5 млн подписчиков это 750 тыс. онлайн-устройств; супергруппа 100 сообщений/с</td><td>Pull-модель, широковещание шлюзам, объединение обновлений раз в 2 с (ADR-1)</td></tr>
+    <tr><td><b>Один регион</b></td><td>150–250 мс RTT с другого континента</td><td>CDN и TURN на краю; active-active в backlog</td></tr>
+    <tr><td><b>Стоимость СМС</b></td><td>1.5 млн кодов × $0.03 = $1.35 млн/мес</td><td>Код в активную сессию, СМС только без неё: $270 тыс.</td></tr>
+    <tr><td><b>Захват номера</b></td><td>Владелец номера владеет аккаунтом</td><td>Облачный пароль (SRP), сессия моложе 24 ч не меняет пароль, сброс через 7 суток</td></tr>
+    <tr><td><b>APNs / FCM</b></td><td>Офлайн-доставка через чужие системы</td><td>Пуш только будит приложение, содержимое забирается через <code>GetDifference</code></td></tr>
+    <tr><td><b>E2EE и регуляторика</b></td><td>В ряде юрисдикций требуют доступ</td><td>Облачные чаты по умолчанию, секретные по выбору (ADR-3)</td></tr>
+  </table></div>
+</div></section>
+
+<!-- 5 -->
+<section class="slide" id="s5"><div class="frame">
+  <div class="eyebrow"><span>2 · Концептуальная архитектура</span><span>5 / 15</span></div>
+  <h2>C4: Context</h2>
+  <div class="diagram"><img src="diagrams/01-c4-context.svg" alt="C4 Context: пользователи, система и внешние интеграции"></div>
+  <div class="legend"><span>👤 роль пользователя</span><span>жирная рамка: проектируемая система</span><span>остальные прямоугольники: внешние системы</span><span>стрелка: кто инициирует вызов, подпись: протокол</span></div>
+</div></section>
+
+<!-- 6 -->
+<section class="slide" id="s6"><div class="frame">
+  <div class="eyebrow"><span>2 · Концептуальная архитектура</span><span>6 / 15</span></div>
+  <h2>C4: Container</h2>
+  <div class="diagram"><img src="diagrams/deck-c4-container.svg" alt="C4 Container: клиенты, край, десять доменных сервисов, хранилища и шины"></div>
+  <div class="legend"><span>сплошная стрелка: синхронный вызов</span><span>пунктир: публикация или подписка в шине</span><span>цилиндр: хранилище или брокер</span><span>байты медиа идут мимо сервисов: напрямую в хранилище и из CDN</span></div>
+</div></section>
+
+<!-- 7 -->
+<section class="slide" id="s7"><div class="frame">
+  <div class="eyebrow"><span>2 · Концептуальная архитектура</span><span>7 / 15</span></div>
+  <h2>Десять сервисов и архитектурный стиль</h2>
+  <div class="cols">
+    <div class="tbl"><table>
+      <tr><th>Сервис</th><th>Зона ответственности</th></tr>
+      <tr><td>Identity &amp; Contacts</td><td>Вход, коды, сессии, профиль. Единственный, кто знает телефон</td></tr>
+      <tr><td>Chat</td><td>Приём сообщения, <code>message_id</code>, запись в Kafka, история, <code>GetDifference</code>, persister</td></tr>
+      <tr><td>Delivery</td><td>Fan-out: журналы получателей (push) или широковещание (pull), выдача <code>pts</code></td></tr>
+      <tr><td>Groups &amp; Channels</td><td>Чаты, участники, роли, ссылки, счётчики</td></tr>
+      <tr><td>Presence</td><td>Реестр сессий: какое устройство на каком шлюзе; онлайн-статус</td></tr>
+      <tr><td>Media</td><td>Прямая загрузка, дедупликация, миниатюры, подписанные ссылки, ярусы</td></tr>
+      <tr><td>Push</td><td>APNs / FCM / Web Push, схлопывание, беззвучные чаты</td></tr>
+      <tr><td>Bot Platform</td><td>Bot API, очередь обновлений, webhook с повторами</td></tr>
+      <tr><td>Calls</td><td>Сигналинг, обмен ключами, адреса TURN</td></tr>
+      <tr><td>Anti-Abuse</td><td>Пропустить, замедлить (<code>FLOOD_WAIT</code>), отклонить</td></tr>
+    </table></div>
+    <div>
+      <h3>Стиль: сервисы вокруг журнала событий</h3>
+      <p>Синхронный путь короткий: устройство → шлюз → Chat → Kafka → ответ. Всё остальное потребители журнала. Отдельный слой долгоживущих соединений на краю.</p>
+      <h3 style="margin-top:14px">Почему не иначе</h3>
+      <ul>
+        <li><b>Монолит.</b> Шлюз это миллионы соединений и мало CPU, миниатюры это CPU, Delivery это запись в ScyllaDB; релиз Anti-Abuse перезапускал бы 8 млн соединений</li>
+        <li><b>Акторы (Erlang).</b> Решает ту же задачу, отвергнут из-за стоимости владения; идея «одно соединение, одна лёгкая сущность» сохранена в Gateway</li>
+        <li><b>Serverless.</b> Нет долгоживущих соединений, холодный старт на пути отправки</li>
+        <li><b>Один PostgreSQL.</b> 750 млн строк и 3.4 млрд записей fan-out в сутки без шардирования не примет</li>
+      </ul>
+      <div class="note" style="margin-top:14px">Chat и Delivery разведены по профилю: Chat отвечает за 200 мс на 26 тыс./с, Delivery делает из них 118 тыс. записей и 185 тыс. публикаций на десятки миллисекунд позже.</div>
+    </div>
+  </div>
+</div></section>
+
+<!-- 8 -->
+<section class="slide" id="s8"><div class="frame">
+  <div class="eyebrow"><span>2 · ADR</span><span>8 / 15</span></div>
+  <h2>Три ключевых решения</h2>
+  <div class="cols">
+    <div>
+      <h3>ADR-1. Гибридный fan-out: push до 200 участников, pull выше</h3>
+      <ul>
+        <li><b>Push везде:</b> пост на 5 млн подписчиков это 5 млн записей; 40 млрд записей в сутки только на каналы</li>
+        <li><b>Pull везде:</b> догон после переподключения это 80 запросов вместо одного, N12 не выполняется</li>
+        <li><b>Решение:</b> запись усиливается не более чем в 200 раз и ограничена 3.4 млрд/сут; большие чаты не пишут ничего на получателя, шлюзы получают одно сообщение на сегмент Pub/Sub</li>
+      </ul>
+    </div>
+    <div>
+      <h3>ADR-2. Синхронизация устройств через журнал с <code>pts</code></h3>
+      <ul>
+        <li>Один журнал обновлений на пользователя, плотный счётчик +1 на каждое изменение</li>
+        <li>Устройство: <code>pts = local + 1</code> применить, разрыв → <code>GetDifference</code>, меньше → дубль</li>
+        <li>Единственный писатель на пользователя через владение партицией Kafka <code>user.updates</code></li>
+        <li>Следствие: онлайн-доставка через Pub/Sub может быть at-most-once, журнал догонит за ≤ 60 с</li>
+      </ul>
+    </div>
+    <div>
+      <h3>ADR-3. Облачные чаты по умолчанию, E2EE в секретных</h3>
+      <ul>
+        <li>Облако даёт историю на новом устройстве, серверный поиск, каналы и ботов на миллионы</li>
+        <li>E2EE везде ломает мультиустройство и каналы; групповое E2EE на 200 тыс. не решено на этом масштабе</li>
+        <li>Секретный чат привязан к двум устройствам, сервер хранит шифротекст ≤ 7 суток; звонки E2EE всегда</li>
+        <li>Цена: приватность облачных чатов держится на матрице доступа и аудите, не на шифровании содержимого</li>
+      </ul>
+    </div>
+  </div>
+</div></section>
+
+<!-- 9 -->
+<section class="slide" id="s9"><div class="frame">
+  <div class="eyebrow"><span>3 · Сайзинг</span><span>9 / 15</span></div>
+  <h2>Нагрузка и ресурсы</h2>
+  <p class="lead">Формулы: RPS<sub>ср</sub> = N / 86 400, пик ×3, запас ×10. Fan-out: 420 млн × 1 + 270 млн × 11 = 3.4 млрд записей в сутки.</p>
+  <div class="cols">
+    <div class="tbl"><table>
+      <tr><th>Поток</th><th class="num">В сутки</th><th class="num">Средн.</th><th class="num">Пик ×3</th></tr>
+      <tr><td><code>SendMessage</code>, Kafka, Anti-Abuse</td><td class="num">750 млн</td><td class="num">8 700</td><td class="num">26 000</td></tr>
+      <tr><td>Fan-out → <code>updates_by_user</code></td><td class="num">3.4 млрд</td><td class="num">39 000</td><td class="num">118 000</td></tr>
+      <tr><td>Кадры шлюз → устройства</td><td class="num">9.3 млрд</td><td class="num">108 000</td><td class="num">320 000</td></tr>
+      <tr><td>Проверка <code>pts</code> и TTL присутствия, каждая</td><td class="num">5 млн / 60 с</td><td class="num">83 000</td><td class="num">133 000</td></tr>
+      <tr><td>Pub/Sub: точечно + широковещание</td><td class="num">5.3 млрд</td><td class="num">62 000</td><td class="num">185 000</td></tr>
+      <tr><td>Чтения ScyllaDB: история, догон, диалоги</td><td class="num">2.1 млрд</td><td class="num">24 000</td><td class="num">73 000</td></tr>
+      <tr><td>Скачивания через CDN</td><td class="num">2.3 млрд</td><td class="num">26 600</td><td class="num">80 000</td></tr>
+      <tr><td>Push → APNs / FCM</td><td class="num">2.5 млрд</td><td class="num">29 000</td><td class="num">87 000</td></tr>
+    </table></div>
+    <div>
+      <div class="tbl"><table>
+        <tr><th>Кластер</th><th>Состав</th><th>Что сайзит</th></tr>
+        <tr><td>Kubernetes</td><td>54 × m6i.8xlarge, 314 подов, ~1 300 vCPU</td><td>80 шлюзов по 100 тыс. соединений; 56 media workers на spot</td></tr>
+        <tr><td>ScyllaDB</td><td>45 → 117 × i3en.3xlarge, RF 3</td><td>Диск: 430 ТБ к году 3; по операциям десятикратный запас</td></tr>
+        <tr><td>Kafka</td><td>12 брокеров, RF 3, ISR 2</td><td>~240 тыс. событий/с на пике</td></tr>
+        <tr><td>Redis</td><td>24 состояние + 6 Pub/Sub</td><td>250 тыс. оп/с; 185 тыс. публикаций/с</td></tr>
+        <tr><td>PostgreSQL</td><td>6 primary + 6 реплик</td><td>Identity 4 шарда, Groups, Bots</td></tr>
+        <tr><td>OpenSearch / ClickHouse</td><td>28 / 3 узла</td><td>75 ТБ горячего индекса; аналитика</td></tr>
+      </table></div>
+      <div class="note" style="margin-top:12px">Самая массовая операция не сообщения, а проверка <code>pts</code> и TTL присутствия: по 133 тыс./с на пике, обе только из памяти.</div>
+    </div>
+  </div>
+</div></section>
+
+<!-- 10 -->
+<section class="slide" id="s10"><div class="frame">
+  <div class="eyebrow"><span>3 · Сайзинг</span><span>10 / 15</span></div>
+  <h2>Хранилище, трафик, стоимость</h2>
+  <div class="cols">
+    <div class="tbl"><table>
+      <tr><th>Хранилище</th><th class="num">Год 1</th><th class="num">Год 3</th></tr>
+      <tr><td>ScyllaDB, всего (на дисках, RF 3)</td><td class="num">65 ТБ</td><td class="num">162 (430) ТБ</td></tr>
+      <tr><td>из них <code>messages_by_chat</code>: 750 млн × 300 Б, сжатие ×0.5</td><td class="num">41 ТБ</td><td class="num">124 ТБ</td></tr>
+      <tr><td><code>updates_by_user</code>, 30 суток, стационарно</td><td class="num">12 ТБ</td><td class="num">12 ТБ</td></tr>
+      <tr><td>Объектное хранилище: 80 ТБ/сут уникальных</td><td class="num">29 ПБ</td><td class="num">87 ПБ</td></tr>
+      <tr><td>PostgreSQL / Redis / Kafka</td><td class="num">0.5 ТБ / 200 ГБ / 7 ТБ</td><td class="num">≈ те же</td></tr>
+      <tr><td>CDN → устройства</td><td class="num">2 100 ТБ/сут, 194 Гбит/с, 63 ПБ/мес</td><td class="num"></td></tr>
+      <tr><td>Внутри кластера</td><td class="num">~31 ТБ/сут, ~3 Гбит/с</td><td class="num"></td></tr>
+    </table></div>
+    <div>
+      <div class="kpis">
+        <div class="kpi"><b>$2.07 млн</b><span>в месяц, год 1; $2.63 млн к году 3</span></div>
+        <div class="kpi"><b>$0.041</b><span>на активного пользователя в месяц, $0.50 в год</span></div>
+        <div class="kpi"><b>≈ $1.6 млн</b><span>после оптимизации: −$460 тыс.</span></div>
+      </div>
+      <div class="tbl" style="margin-top:12px"><table>
+        <tr><th>Статья</th><th class="num">Год 1</th><th class="num">Доля</th></tr>
+        <tr><td>CDN: 63 ПБ × $0.015 + запросы</td><td class="num">$1 014 000</td><td class="num">49 %</td></tr>
+        <tr><td>Объектное хранилище, ярусы Standard / IA / Glacier IR</td><td class="num">$517 000</td><td class="num">25 %</td></tr>
+        <tr><td>СМС: 0.3 млн/сут после «кода в сессию»</td><td class="num">$270 000</td><td class="num">13 %</td></tr>
+        <tr><td>Вычисления, базы, брокеры, сеть, DR</td><td class="num">$270 000</td><td class="num">13 %</td></tr>
+      </table></div>
+      <p style="margin-top:10px;font-size:13.5px">Оптимизация: кодеки и адаптивный битрейт −$300 тыс.; доверенное устройство и звонок с кодом −$90 тыс.; резервирование −$52 тыс.; zstd в ScyllaDB и spot / Graviton −$20 тыс. Срок хранения медиа не трогаем: это отказ от обещания «облако навсегда».</p>
+    </div>
+  </div>
+</div></section>
+
+<!-- 11 -->
+<section class="slide" id="s11"><div class="frame">
+  <div class="eyebrow"><span>4 · Хранение данных</span><span>11 / 15</span></div>
+  <h2>Модель данных, шардирование, кэширование</h2>
+  <div class="cols">
+    <div class="tbl"><table>
+      <tr><th>ScyllaDB</th><th>Ключ партиции / кластеризация</th><th>Запрос</th></tr>
+      <tr><td><code>messages_by_chat</code></td><td><code>(chat_id, bucket)</code> / <code>message_id DESC</code></td><td>Страница истории, <code>GetChannelDifference</code>. Бакет месяц / сутки / час: худшая партиция 108 МБ</td></tr>
+      <tr><td><code>updates_by_user</code></td><td><code>user_id</code> / <code>pts</code>; static <code>pts_last</code>; TTL 30 сут</td><td><code>GetDifference</code> одним range-запросом; счётчик атомарен с записью</td></tr>
+      <tr><td><code>dialogs_by_user</code></td><td><code>user_id</code> / <code>chat_id</code></td><td>Список чатов одной партицией, лимит 2 000 чатов</td></tr>
+      <tr><td><code>members_by_chat</code></td><td><code>(chat_id, user_id mod 64)</code></td><td>Канал на 10 млн в партициях по 6 МБ</td></tr>
+      <tr><td><code>chats_by_user</code></td><td><code>user_id</code> / <code>chat_id</code></td><td>Проверка членства точечным чтением, не из кэша</td></tr>
+      <tr><td><code>files</code>, <code>files_by_hash</code></td><td><code>file_id</code>; <code>sha256</code></td><td>Метаданные и дедупликация</td></tr>
+    </table></div>
+    <div>
+      <h3>Почему такие базы</h3>
+      <ul>
+        <li><b>ScyllaDB</b> для всего, что растёт миллиардами строк под известный запрос: ленты, журналы, участники, контакты, файлы. DynamoDB дал бы $280 тыс./мес против $45 тыс.</li>
+        <li><b>PostgreSQL</b> для транзакций и уникальности: учётные записи (4 шарда по <code>user_id</code>), сессии, чаты и роли, боты</li>
+        <li><b>Redis</b>: реестр сессий и присутствие без вытеснения; кэши <code>pts</code>, диалогов, метаданных с LRU; два кластера, Pub/Sub отдельно</li>
+        <li><b>Объектное хранилище</b> с ярусами, <b>OpenSearch</b> и <b>ClickHouse</b> как проекции из Kafka</li>
+      </ul>
+      <h3 style="margin-top:12px">Единственный писатель</h3>
+      <ul>
+        <li><code>message_id</code>: владелец чата по consistent hashing берёт блок в 1 000 номеров через LWT</li>
+        <li><code>pts</code>: владелец партиции <code>user.updates</code> читает <code>pts_last</code> и инкрементирует в памяти</li>
+      </ul>
+      <div class="note" style="margin-top:12px">Главный кэш это устройство: локальная копия истории, обновляемая по <code>pts</code>. 95 % чтений не доходят до сервера. Права (членство, админ) никогда не берутся из кэша.</div>
+    </div>
+  </div>
+</div></section>
+
+<!-- 12 -->
+<section class="slide" id="s12"><div class="frame">
+  <div class="eyebrow"><span>5 · Взаимодействие</span><span>12 / 15</span></div>
+  <h2>Протоколы и путь сообщения</h2>
+  <div class="cols">
+    <div class="diagram"><img src="diagrams/deck-seq-send.svg" alt="Отправка сообщения в группу: Gateway, Chat, Kafka, две ступени Delivery, Presence, Pub/Sub, Push"></div>
+    <div>
+      <div class="tbl"><table>
+        <tr><th>Ребро</th><th>Протокол</th></tr>
+        <tr><td>Устройство ↔ Gateway</td><td>WebSocket + Protobuf на 443; запасной long polling</td></tr>
+        <tr><td>Вход, медиа, Bot API</td><td>REST поверх HTTPS</td></tr>
+        <tr><td>Байты медиа</td><td>PUT по подписанным ссылкам в хранилище; GET из CDN с Range</td></tr>
+        <tr><td>Звонки</td><td>UDP, DTLS-SRTP через STUN / TURN</td></tr>
+        <tr><td>Между сервисами</td><td>gRPC; события через Kafka</td></tr>
+        <tr><td>Delivery → шлюзы</td><td>Redis Pub/Sub, at-most-once осознанно</td></tr>
+      </table></div>
+      <h3 style="margin-top:12px">Контракты в документе</h3>
+      <ul>
+        <li>Протокол устройства: <code>Envelope</code>, <code>SendMessage</code>, <code>Updates</code>, <code>GetDifference</code>, <code>GetState</code></li>
+        <li>REST входа с <code>code_hash</code> и SRP; REST медиа с multipart и дедупликацией</li>
+        <li>Bot API: <code>sendMessage</code>, webhook с секретом, <code>getUpdates</code></li>
+        <li>gRPC <code>Chat</code>: идемпотентность по <code>random_id</code>, ответ после Kafka, не после ScyllaDB</li>
+      </ul>
+    </div>
+  </div>
+</div></section>
+
+<!-- 13 -->
+<section class="slide" id="s13"><div class="frame">
+  <div class="eyebrow"><span>6 · Надёжность</span><span>13 / 15</span></div>
+  <h2>RTO / RPO, репликация, DR</h2>
+  <div class="cols">
+    <div class="tbl"><table>
+      <tr><th>Компонент</th><th class="num">RTO</th><th class="num">RPO</th><th>Как</th></tr>
+      <tr><td>Kafka <code>message.events</code></td><td class="num">≤ 2 мин</td><td class="num">0</td><td><code>acks=all</code>, две зоны до ответа отправителю</td></tr>
+      <tr><td>ScyllaDB</td><td class="num">0</td><td class="num">0</td><td>RF 3 по зонам, <code>LOCAL_QUORUM</code></td></tr>
+      <tr><td>Chat, Delivery</td><td class="num">≤ 2 мин</td><td class="num">0</td><td>Без состояния; ребаланс групп, дубли гасятся</td></tr>
+      <tr><td>Gateway</td><td class="num">≤ 1 мин</td><td class="num">—</td><td>Переподключение с backoff 0–60 с и <code>GetDifference</code></td></tr>
+      <tr><td>Presence, Pub/Sub</td><td class="num">≤ 5 мин</td><td class="num">всё</td><td>Восстановимо; устройства догоняют по <code>pts</code> ≤ 60 с</td></tr>
+      <tr><td>PostgreSQL</td><td class="num">≤ 1 мин</td><td class="num">0</td><td>Синхронная реплика, failover</td></tr>
+      <tr><td>Push, боты, проекции</td><td class="num">30 мин – 4 ч</td><td class="num">≤ 1 ч</td><td>Переигрывание из Kafka</td></tr>
+    </table>
+    <p style="margin-top:10px;font-size:13.5px">Одиночный отказ на пути сообщения стоит ≤ 2 мин задержки и ноль потерь; в бюджете 22 мин/мес это до десяти отказов. Kafka единственный компонент без деградации: лучше не подтвердить, чем подтвердить и потерять.</p>
+    </div>
+    <div>
+      <h3>План DR: потеря региона</h3>
+      <ul>
+        <li>Active-passive, тёплый резерв: ScyllaDB второй датацентр RF 2 async, реплики PostgreSQL, зеркало Kafka, 12 узлов с ростом до 54. $52 тыс./мес</li>
+        <li>Медиа не реплицируется: при потере региона недоступно, но не потеряно</li>
+        <li>Цели: <b>RTO 30 мин, RPO ≤ 30 с</b>; за 30 с это 260 тыс. сообщений в среднем, устройство отправителя показывает «отправить снова»</li>
+        <li>Решает человек: ложное срабатывание дало бы двух владельцев <code>message_id</code></li>
+      </ul>
+      <div class="tbl" style="margin-top:10px"><table>
+        <tr><th>Шаг</th><th class="num">Минуты</th></tr>
+        <tr><td>Обнаружение: синтетика из трёх точек + control plane</td><td class="num">0–3</td></tr>
+        <tr><td>Решение и fencing старого региона</td><td class="num">3–8</td></tr>
+        <tr><td>Данные: ScyllaDB единственный ДЦ, promote PG, зеркало Kafka основное</td><td class="num">8–15</td></tr>
+        <tr><td>Трафик: DNS TTL 60 с, origin CDN</td><td class="num">15–20</td></tr>
+        <tr><td>Мощность 12 → 54 узла, load shedding; проверка</td><td class="num">15–30</td></tr>
+      </table></div>
+      <p style="margin-top:10px;font-size:13.5px">Паттерны: таймауты 150 / 100 / 50 / 20 мс по рёбрам, retry budget ≤ 10 %, circuit breaker на Anti-Abuse и провайдеров, bulkhead по таблицам и ботам, load shedding «доставка важнее истории».</p>
+    </div>
+  </div>
+</div></section>
+
+<!-- 14 -->
+<section class="slide" id="s14"><div class="frame">
+  <div class="eyebrow"><span>7 · Безопасность · 8 · Observability</span><span>14 / 15</span></div>
+  <h2>Безопасность и наблюдаемость</h2>
+  <div class="cols">
+    <div>
+      <h3>Аутентификация и авторизация</h3>
+      <ul>
+        <li>Телефон + код (в сессию или СМС) + облачный пароль по SRP; <code>auth_key</code> 256 бит, у сервера только хэш</li>
+        <li>Шлюз подставляет <code>user_id</code> из сессии, клиенту не верим; права по источнику, не из кэша</li>
+        <li>Сессия моложе 24 ч не меняет пароль и не отзывает другие; сброс через 7 суток</li>
+        <li>Сервис → сервис mTLS и матрица вызовов; сотрудники через SSO + MFA, доступ к содержимому с аудитом каждого просмотра</li>
+      </ul>
+      <h3 style="margin-top:12px">Шифрование и секреты</h3>
+      <ul>
+        <li>TLS 1.3 с pinning снаружи, mTLS внутри, диски и бэкапы ключами KMS</li>
+        <li>Секретные чаты и звонки E2EE: ключ по Диффи-Хеллману, отпечаток на экране</li>
+        <li>Телефон шифруется на уровне поля, поиск по HMAC; текст сообщений не попадает в логи никогда</li>
+        <li>Секреты из хранилища по идентичности пода, ротация без перезапуска</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Ключевые метрики (17 в документе)</h3>
+      <ul>
+        <li>Отправок в минуту против прогноза; задержка доставки p95 / p99; доля доставок за 5 с</li>
+        <li>Соединений на под и темп переподключений; p99 <code>SendMessage</code>; lag обеих ступеней Delivery</li>
+        <li>ScyllaDB p99 и размер крупнейших партиций; under-replicated в Kafka; вытеснения в Redis</li>
+        <li>CDN hit ratio; успешность кодов по стране; доля TURN в звонках; синтетика из трёх точек</li>
+      </ul>
+      <h3 style="margin-top:12px">Алерты: семь, четыре будят ночью</h3>
+      <div class="tbl"><table>
+        <tr><td>1</td><td>Сообщения не доставляются: отправок &lt; 70 % прогноза, доставок за 5 с &lt; 99 %, синтетика</td></tr>
+        <tr><td>2</td><td>Шторм переподключений: темп ×3 или соединений −20 %</td></tr>
+        <tr><td>3</td><td>Доставка отстаёт: lag Delivery &gt; 2 с</td></tr>
+        <tr><td>4</td><td>ScyllaDB: p99 &gt; 20 мс, &gt; 1 узла в зоне, диск &gt; 80 %, DR lag &gt; 30 с</td></tr>
+        <tr><td>5–7</td><td>Пуши не уходят; коды входа не доходят (&lt; 90 % по стране); медиа не работает</td></tr>
+      </table></div>
+    </div>
+  </div>
+</div></section>
+
+<!-- 15 -->
+<section class="slide" id="s15"><div class="frame">
+  <div class="eyebrow"><span>9 · Тестирование · Итог</span><span>15 / 15</span></div>
+  <h2>Как проверяем и что связывает разделы</h2>
+  <div class="cols">
+    <div>
+      <h3>Нагрузочное тестирование: контур в полном размере</h3>
+      <ul>
+        <li><b>Базовый ×1</b> и <b>пик ×3</b>: 26 тыс./с, 8 млн соединений, 118 тыс. fan-out/с, 2 ч; все бюджеты, ни один <code>pts</code> не пропущен</li>
+        <li><b>Новый год ×10</b>: 87 тыс./с за 60 с, автомасштабирование ≤ 3 мин, load shedding</li>
+        <li><b>Выдержка</b> ×1.5, 24 ч: утечки, партиции, компакции</li>
+        <li><b>Супергруппа</b> 200 тыс., 100 сообщений/с; <b>канал на 10 млн</b>: ≤ 80 доставок на пост, 150 тыс./с на партицию</li>
+        <li><b>Шторм переподключений</b>: 8 млн за 60 с = 133 тыс./с при потолке 160 тыс./с; <b>волна медиа</b> 2.6 тыс. загрузок/с</li>
+      </ul>
+      <h3 style="margin-top:12px">Chaos-эксперименты</h3>
+      <ul>
+        <li>Потеря зоны ScyllaDB под нагрузкой: кворум из двух, время repair</li>
+        <li>Потеря кластера Redis Pub/Sub: догон по <code>pts</code> ≤ 60 с, волна <code>GetDifference</code> ~133 тыс./с</li>
+        <li>Потеря зоны шлюзов: 2.7 млн устройств на оставшиеся 53 пода, хватает ли запаса 30 %</li>
+      </ul>
+      <div class="note warn" style="margin-top:10px">Тест, где латентность в бюджете, а журнал расходится, провален: инварианты проверяются после каждого прогона.</div>
+    </div>
+    <div class="tbl"><table>
+      <tr><th>Решение</th><th>Где используется</th></tr>
+      <tr><td>750 млн сообщений, ×3 / ×10</td><td>RPS, узлы, сценарии тестов</td></tr>
+      <tr><td>Гибридный fan-out с порогом 200</td><td>3.4 млрд записей, <code>delivery_model</code>, схема поста в канале, сценарии 5–6</td></tr>
+      <tr><td><code>pts</code> с единственным писателем</td><td>static-колонка, две ступени Delivery, at-most-once Pub/Sub, эксперимент №2</td></tr>
+      <tr><td>Kafka как точка долговечности</td><td>RPO 0, «компонент без деградации», таймаут produce 100 мс в бюджете 200</td></tr>
+      <tr><td>Байты медиа мимо сервисов</td><td>Bandwidth, CDN 49 % счёта, подписанные ссылки, сценарий 8</td></tr>
+      <tr><td>Код в активную сессию</td><td>−$1 млн/мес, метрика 13, алерт №6</td></tr>
+      <tr><td>Облачные чаты без шифрования содержимого</td><td>Поиск, аудит доступа, что не логируем</td></tr>
+      <tr><td>8 млн соединений по 100 тыс. на под</td><td>Метрика 4, эксперимент №3, сценарий 7</td></tr>
+      <tr><td>Часовой бакет для горячих чатов</td><td>Партиция ≤ 110 МБ, метрика 8, сценарий 5</td></tr>
+    </table></div>
+  </div>
+</div></section>
+
+<div class="nav" aria-label="Навигация по слайдам">
+  <button type="button" id="prev" aria-label="Предыдущий слайд">←</button>
+  <span id="counter">1 / 15</span>
+  <button type="button" id="next" aria-label="Следующий слайд">→</button>
+</div>
+
+<script>
+(function(){
+  var slides=[].slice.call(document.querySelectorAll('.slide'));
+  var counter=document.getElementById('counter');
+  function current(){
+    var y=window.scrollY+window.innerHeight/2, i=0;
+    for(var k=0;k<slides.length;k++){ if(slides[k].offsetTop<=y) i=k; }
+    return i;
+  }
+  function go(i){ i=Math.max(0,Math.min(slides.length-1,i)); slides[i].scrollIntoView({block:'start'}); }
+  function update(){ counter.textContent=(current()+1)+' / '+slides.length; }
+  document.getElementById('prev').addEventListener('click',function(){go(current()-1)});
+  document.getElementById('next').addEventListener('click',function(){go(current()+1)});
+  document.addEventListener('keydown',function(e){
+    if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA') return;
+    if(e.key==='ArrowRight'||e.key==='ArrowDown'||e.key===' '||e.key==='PageDown'){e.preventDefault();go(current()+1);}
+    else if(e.key==='ArrowLeft'||e.key==='ArrowUp'||e.key==='PageUp'){e.preventDefault();go(current()-1);}
+    else if(e.key==='Home'){go(0);} else if(e.key==='End'){go(slides.length-1);}
+  });
+  window.addEventListener('scroll',update,{passive:true}); update();
+})();
+</script>
